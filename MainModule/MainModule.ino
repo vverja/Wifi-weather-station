@@ -1,15 +1,4 @@
-/*
- *  This sketch sends data via HTTP GET requests to data.sparkfun.com service.
- *
- *  You need to get streamId and privateKey at data.sparkfun.com and paste them
- *  below. Or just customize this script to talk to other HTTP servers.
- *
- */
- 
  #include <ESP8266WiFi.h>
-
-   
-  // Use WiFiClient class to create TCP connections
   WiFiClient client;
   
  #include <ArduinoJson.h>
@@ -35,7 +24,7 @@ DHT dht(DHTPIN, DHTTYPE);
 
 //Библиотеки для работы с экраном
 #include <LiquidCrystal_I2C.h>
-LiquidCrystal_I2C lcd(PCF8574_ADDR_A21_A11_A01, 4, 5, 6, 16, 11, 12, 13, 14, POSITIVE);
+LiquidCrystal_I2C lcd(PCF8574A_ADDR_A21_A11_A01, 4, 5, 6, 16, 11, 12, 13, 14, POSITIVE);
 
 
 File DataFile;
@@ -49,6 +38,8 @@ struct iniStruct{
   int port;
 };
 iniStruct config ;
+bool noConnection = false;
+int dateOfLostConnection[6];
 
 void setup() {
   Serial.begin(115200);
@@ -106,105 +97,84 @@ void setup() {
 
   // We start by connecting to a WiFi network
 
-  Serial.println();
-  Serial.println();
-  Serial.print("Connecting to ");
-  Serial.println(config.ssid);
-  
-  /* Explicitly set the ESP8266 to be a WiFi-client, otherwise, it by default,
-     would try to act as both a client and an access-point and could cause
-     network-issues with your other WiFi-devices on your WiFi-network. */
-  WiFi.mode(WIFI_STA);
-  WiFi.begin(config.ssid, config.password);
-  int count = 0; 
-  while (WiFi.status() != WL_CONNECTED) {
-    delay(1000);
-    Serial.print(".");
-    if (count > 15){
-      WiFi.begin("finance", "kvadrat1");
-      Serial.print("\nConnecting to ");
-      Serial.println("finance");
-      while (WiFi.status() != WL_CONNECTED) {
-          delay(1000);
-          Serial.print(".");    
-          if (count > 15){
-            ESP.reset();  
-          }
-        }    
-    }
-    count++;
-  }
-
-  Serial.println("");
-  Serial.println("WiFi connected");  
-  Serial.println("IP address: ");
-  Serial.println(WiFi.localIP());
+ WiFi.mode(WIFI_STA);
 }
 
 int value = 0;
 
 void loop() {
-
-
   if (!Rtc.IsDateTimeValid()) 
   {
-      // Common Cuases:
-      //    1) the battery on the device is low or even missing and the power line was disconnected
       Serial.println("RTC lost confidence in the DateTime!");
   }
-
   RtcDateTime now = Rtc.GetDateTime();
   char currentDate[20]; 
-  printDateTime(currentDate, now, false);
-  Serial.println(currentDate);
-  
+  printDateTime(currentDate, now, false); 
   char currentDateTime[20]; 
   printDateTime(currentDateTime, now, true);
-  Serial.println(currentDateTime);
   
-  Serial.print("connecting to ");
-  Serial.println(config.host);
-
-   
+  if (WiFi.status()!= WL_CONNECTED){ 
+    Serial.print("Connecting to ");
+    Serial.println(config.ssid);
+    WiFi.begin(config.ssid, config.password);
+  }
+  int count = 0; 
+  while (WiFi.status() != WL_CONNECTED) {
+    delay(1000);
+    Serial.print(".");
+    if (count > 30){
+      if (noConnection == false){
+        Serial.println("No connection with WiFi");
+        dateOfLostConnection[0] = now.Day();
+        dateOfLostConnection[1] = now.Month();
+        dateOfLostConnection[2] = now.Year();
+        dateOfLostConnection[3] = now.Hour();
+        dateOfLostConnection[4] = now.Minute();
+        dateOfLostConnection[5] = now.Second();
+        noConnection = true;
+        break;
+      }
+    }
+    count++;
+  }
+  if (WiFi.status() == WL_CONNECTED){
+    Serial.println("WiFi connected");  
+    Serial.println("IP address: ");
+    Serial.println(WiFi.localIP());
+    if (noConnection){
+      noConnection = false;  
+      sendLostDataToServer(dateOfLostConnection);
+    }
+  }
   float h = dht.readHumidity();
-  
   float t = dht.readTemperature();
-
   if (isnan(h) || isnan(t)) {
     Serial.println("Failed to read from DHT sensor!");
     return;
   }
-
   writeToSD(h, t, currentDate, currentDateTime);
-  
-  if(!postPage(config.host,config.port,"/deviceController/setDataFromWifiDevices",getJsonString(t, h))) Serial.print(F("Fail "));
+  if (!noConnection){
+    Serial.print("connecting to ");
+    Serial.println(config.host);
+    if(!postPage(config.host,config.port,"/deviceController/setDataFromWifiDevices",getJsonString(t, h))) Serial.print(F("Fail "));
     else Serial.print(F("Pass "));
-  delay(3600000);
+  }
+  delay(1800000);
 }
 
 
 void loadConfiguration(const char *filename, iniStruct &config) {
   // Open file for reading
   File file = SD.open(filename);
-
-  // Allocate the memory pool on the stack.
-  // Don't forget to change the capacity to match your JSON document.
-  // Use arduinojson.org/assistant to compute the capacity.
   StaticJsonBuffer<512> jsonBuffer;
-
-  // Parse the root object
   JsonObject &root = jsonBuffer.parseObject(file);
-
   if (!root.success())
     Serial.println(F("Failed to read file"));
-    
-  // Copy values from the JsonObject to the Config
   strlcpy(config.ssid, root["ssid"],sizeof(config.ssid));
   strlcpy(config.host, root["host"], sizeof(config.host));
   strlcpy(config.password, root["password"], sizeof(config.password));
   strlcpy(config.url, root["url"], sizeof(config.url));
   config.port = root["port"];
-  // Close the file (File's destructor doesn't close the file)
   file.close();
 }
 
@@ -214,8 +184,6 @@ void writeToSD(float h, float t, char currentDate[], char currentDateTime[]){
   fileName = fileName + ".txt";
   Serial.println("Trying to write into the file " + fileName);
   File myFile = SD.open(fileName, FILE_WRITE);
-  
-  // if the file opened okay, write to it:
   if (myFile) {
     myFile.print(">>> ");
     myFile.print(currentDateTime);
@@ -227,15 +195,12 @@ void writeToSD(float h, float t, char currentDate[], char currentDateTime[]){
     myFile.print(" *C ");
     myFile.print("\n");
     myFile.close();
-
   } else {
-    // if the file didn't open, print an error:
     Serial.println("error opening " + fileName);
   }  
 }
 
 #define countof(a) (sizeof(a) / sizeof(a[0]))
-
 void printDateTime(char datestring[], const RtcDateTime& dt, bool type)
 {
   if(type)
@@ -312,10 +277,10 @@ byte postPage(char* domainBuffer,int thisPort,char* page,String thisData)
   client.stop();
   return 1;
 }
-String getJsonString(float t, float h){
-    //sprintf(outBuf,"{\'obj\':\'{\'id\':\'1\', \'type\':\'W\', \'temp\':\'%u\', \'hum\':\'%u\'}\'}",t,h);
-    
+String getJsonString(float t, float h){ 
     return "obj={\"id\":1, \"type\":\"W\", \"temp\":" + String(t) + ", \"hum\":" + String(h) + ", \"name\":\"Device1\"}";
-    
   }
 
+void sendLostDataToServer(int* dateOfLostConnection){
+  
+ }
