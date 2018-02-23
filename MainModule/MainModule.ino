@@ -125,12 +125,7 @@ void loop() {
     if (count > 30){
       if (noConnection == false){
         Serial.println("No connection with WiFi");
-        dateOfLostConnection[0] = now.Day();
-        dateOfLostConnection[1] = now.Month();
-        dateOfLostConnection[2] = now.Year();
-        dateOfLostConnection[3] = now.Hour();
-        dateOfLostConnection[4] = now.Minute();
-        dateOfLostConnection[5] = now.Second();
+        dateOfLostConnection = now;
         noConnection = true;
         break;
       }
@@ -143,7 +138,7 @@ void loop() {
     Serial.println(WiFi.localIP());
     if (noConnection){
       noConnection = false;  
-      sendLostDataToServer(dateOfLostConnection);
+      sendLostDataToServer(dateOfLostConnection,now);
     }
   }
   float h = dht.readHumidity();
@@ -280,7 +275,14 @@ byte postPage(char* domainBuffer,int thisPort,char* page,String thisData)
 String getJsonString(float t, float h){ 
     return "obj={\"id\":1, \"type\":\"W\", \"temp\":" + String(t) + ", \"hum\":" + String(h) + ", \"name\":\"Device1\"}";
   }
-
-void sendLostDataToServer(int* dateOfLostConnection){
-  
+//This module sends the data which never been send from last onnection lost
+void sendLostDataToServer(const RtcDateTime& dateOfLostConnection,  const RtcDateTime& currentDate){
+  if (currentDate.Year() == dateOfLostConnection.Year())
+    if ((currentDate.Month() == dateOfLostConnection.Month())
+      if ((currentDate.Day() == dateOfLostConnection.Day())
+       if ((currentDate.Hour() == dateOfLostConnection.Hour())
+        if ((currentDate.Minute() != dateOfLostConnection.Minute())
+          
+  char fileName[] = String(dateOfLostConnection[0]) + String(dateOfLostConnection[1]) + String(dateOfLostConnection[2]) + ".txt";
+  file = SD.open(fileName);
  }
